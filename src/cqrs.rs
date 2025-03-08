@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{domain::Cart, dtos::{CartResponse, CreateCartResponse, GetCartsResponse, Response}, repositories::{CartRepository, OrderRepository}, uow::RepositoryContext};
+use crate::{domain::Cart, dtos::{AddProductToCartResponse, CartResponse, CreateCartResponse, GetCartsResponse, Response}, events::{Event, MessageBroker}, repositories::{CartRepository, OrderRepository}, uow::RepositoryContext};
 
 // traits
 pub trait Command{}
@@ -18,9 +18,15 @@ pub trait QueryHandler<Q: Query, R: Response>{
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateCartCommand{
-    pub products: Vec<String>,
 }
 impl Command for CreateCartCommand{}
+
+#[derive(Serialize, Deserialize)]
+pub struct AddProductToCartCommand {
+    pub cart_id: String,
+    pub product_id: String,
+}
+impl Command for AddProductToCartCommand{}
 
 #[derive(Serialize, Deserialize)]
 pub struct GetCartsQuery {
@@ -28,27 +34,23 @@ pub struct GetCartsQuery {
 }
 impl Query for GetCartsQuery{}
 
-pub struct CreateCartCommandHandler<T1: OrderRepository, T2: CartRepository>{
-    uow: Arc<RepositoryContext<T1, T2>>
+pub struct CreateCartCommandHandler<T1: OrderRepository, T2: CartRepository, T3: MessageBroker>{
+    uow: Arc<RepositoryContext<T1, T2, T3>>
 }
 
-impl<T1: OrderRepository, T2: CartRepository> CreateCartCommandHandler<T1, T2>{
-    pub fn new(uow: Arc<RepositoryContext<T1, T2>>) -> Self{
+impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CreateCartCommandHandler<T1, T2, T3>{
+    pub fn new(uow: Arc<RepositoryContext<T1, T2, T3>>) -> Self{
         CreateCartCommandHandler {
             uow: uow
         }
     }
 }
 
-impl<T1: OrderRepository, T2: CartRepository> CommandHandler<CreateCartCommand, CreateCartResponse> for CreateCartCommandHandler<T1, T2>{
+impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<CreateCartCommand, CreateCartResponse> for CreateCartCommandHandler<T1, T2, T3>{
     async fn handle(&self, input: &CreateCartCommand) -> Result<CreateCartResponse, String> {
-        if input.products.is_empty() {
-            return Err(String::from("Products cannot be empty!!!"));
-        }
-
         let domain_cart = Cart {
             id: uuid::Uuid::new_v4().to_string(),
-            products: input.products.clone()
+            products: Vec::new()
         };
 
         match self.uow.add_cart(domain_cart.id.clone(), domain_cart).await {
@@ -71,19 +73,75 @@ impl<T1: OrderRepository, T2: CartRepository> CommandHandler<CreateCartCommand, 
     }
 }
 
-pub struct GetCartsQueryHandler<T1: OrderRepository, T2: CartRepository> {
-    uow: Arc<RepositoryContext<T1, T2>>
+pub struct AddProductToCartCommandHandler<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> {
+    uow: Arc<RepositoryContext<T1, T2, T3>>
 }
 
-impl<T1: OrderRepository, T2: CartRepository> GetCartsQueryHandler<T1, T2> {
-    pub fn new(uow: Arc<RepositoryContext<T1, T2>>) -> Self {
+impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> AddProductToCartCommandHandler<T1, T2, T3>{
+    pub fn new(uow: Arc<RepositoryContext<T1, T2, T3>>) -> Self {
+        AddProductToCartCommandHandler{
+            uow: uow
+        }
+    }
+}
+
+impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<AddProductToCartCommand, AddProductToCartResponse> for AddProductToCartCommandHandler<T1, T2, T3>{
+    async fn handle(&self, input: &AddProductToCartCommand) -> Result<AddProductToCartResponse, String> {
+        if input.cart_id.is_empty() {
+            return Err(String::from("Cart ID cannot be null or empty!!!"));
+        }
+
+        if input.product_id.is_empty() {
+            return Err(String::from("Product ID cannot be null or empty!!!"));
+        }
+
+        match self.uow.cart_repository.read(&input.cart_id).await {
+            Ok(mut found_cart) => {
+                found_cart.products.push(input.product_id.clone());
+
+                match self.uow.cart_repository.update(input.cart_id.clone(), found_cart).await{
+                    Ok(updated_cart) => {
+                        {
+                            let mut event_lock = self.uow.events_to_publish.lock().await;
+
+                            event_lock.push(Event::ProductAddedToCartEvent{
+                                product_id: input.product_id.clone()
+                            });
+                        }
+
+                        println!("committing");
+                        self.uow.commit().await.unwrap();
+                        println!("committed");
+
+                        Ok(AddProductToCartResponse {
+                            cart_id: updated_cart.id
+                        })
+                    },
+                    Err(e) => {
+                        Err(format!("Failed to update Cart with ID {}: {}", input.cart_id, e))
+                    }
+                }
+            },
+            Err(e) => {
+                Err(format!("Failed to find Cart with ID {}: {}", input.cart_id, e))
+            }
+        }
+    }
+}
+
+pub struct GetCartsQueryHandler<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> {
+    uow: Arc<RepositoryContext<T1, T2, T3>>
+}
+
+impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> GetCartsQueryHandler<T1, T2, T3> {
+    pub fn new(uow: Arc<RepositoryContext<T1, T2, T3>>) -> Self {
         GetCartsQueryHandler {
             uow: uow
         }
     }
 }
 
-impl<T1: OrderRepository, T2: CartRepository> QueryHandler<GetCartsQuery, GetCartsResponse> for GetCartsQueryHandler<T1, T2> {
+impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> QueryHandler<GetCartsQuery, GetCartsResponse> for GetCartsQueryHandler<T1, T2, T3> {
     async fn handle(&self, input_option: Option<GetCartsQuery>) -> Result<GetCartsResponse, String> {
         match input_option {
             Some(input) => {

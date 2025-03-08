@@ -21,6 +21,12 @@ pub struct GetCartsResponse {
 impl Response for GetCartsResponse{}
 
 #[derive(Serialize, Deserialize)]
+pub struct AddProductToCartResponse {
+    pub cart_id: String
+}
+impl Response for AddProductToCartResponse{}
+
+#[derive(Serialize, Deserialize)]
 pub struct ApiError {
     pub error: String
 }

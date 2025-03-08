@@ -325,7 +325,24 @@ impl CartRepository for MongoDbCartRepository{
     }
 
     async fn update(&self, id: String, cart: Cart) -> Result<Cart, String> {
-        todo!()
+        match self.cart_collection.replace_one(doc! {"id": &id}, cart).await {
+            Ok(_) => {
+                match self.cart_collection.find_one(doc! {"id": &id}).await {
+                    Ok(find_one_cart_option) => {
+                        match find_one_cart_option {
+                            Some(p) => Ok(p),
+                            None => Err(format!("Failed to find Cart with id {}", id))
+                        }
+                    },
+                    Err(e) => {
+                        Err(format!("Failed to update Cart: {}", e))
+                    }
+                }
+            },
+            Err(e) => {
+                Err(format!("Failed to update Cart: {}", e))
+            }
+        }
     }
 
     async fn delete(&self, id: &str) {
