@@ -9,6 +9,8 @@ use state::AppState;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uow::RepositoryContext;
+use dotenv::dotenv;
+use std::env;
 
 mod domain;
 mod repositories;
@@ -21,21 +23,23 @@ mod events;
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
+
     let order_db_info = MongoDbInitializationInfo {
-        uri: String::from("mongodb://localhost:27017"),
-        database: String::from("eshop-order"),
-        collection: String::from("orders")
+        uri: String::from(env::var("MONGODB_URI").unwrap()),
+        database: String::from(env::var("MONGODB_DB").unwrap()),
+        collection: String::from(env::var("MONGODB_ORDER_COLLECTION").unwrap())
     };
 
     let cart_db_info = MongoDbInitializationInfo {
-        uri: String::from("mongodb://localhost:27017"),
-        database: String::from("eshop-order"),
-        collection: String::from("carts")
+        uri: String::from(env::var("MONGODB_URI").unwrap()),
+        database: String::from(env::var("MONGODB_DB").unwrap()),
+        collection: String::from(env::var("MONGODB_CARTS_COLLECTION").unwrap())
     };
 
     let order_repository = Arc::new(MongoDbOrderRepository::new(&order_db_info).await);
     let cart_repository = Arc::new(MongoDbCartRepository::new(&cart_db_info).await);
-    let message_broker = Arc::new(RabbitMqMessageBroker::new(RabbitMqInitializationInfo::new(String::from("localhost"), 5672, String::from("guest"), String::from("guest"))).await.unwrap());
+    let message_broker = Arc::new(RabbitMqMessageBroker::new(RabbitMqInitializationInfo::new(String::from(env::var("RABBITMQ_URI").unwrap()), env::var("RABBITMQ_PORT").unwrap().parse().unwrap(), String::from(env::var("RABBITMQ_USER").unwrap()), String::from(env::var("RABBITMQ_PASS").unwrap()))).await.unwrap());
     let uow = Arc::new(RepositoryContext::new(order_repository, cart_repository, message_broker));
     let create_cart_command_handler = Arc::new(CreateCartCommandHandler::new(uow.clone()));
     let get_carts_query_handle = Arc::new(GetCartsQueryHandler::new(uow.clone()));
@@ -49,7 +53,7 @@ async fn main() {
 
     tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).init();
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:9091").await.unwrap();
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", env::var("AXUM_PORT").unwrap())).await.unwrap();
 
     axum::serve(listener, Router::new()
         .route("/", get(index))
