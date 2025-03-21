@@ -1,0 +1,28 @@
+name: eshop-order-service Docker Image CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+    permissions:
+      contents: read
+      id-token: write
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Build the Docker image and push to ACR
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Build and push image to ACR
+      run: az acr build --registry ${{ secrets.ACR_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --image "eshop-aks/order-service":$(date +%Y%m%d%H%M%S) .
