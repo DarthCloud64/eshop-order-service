@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::{http::Method, routing::{get, post, put}, Router};
+use axum::{http::Method, middleware::from_fn_with_state, routing::{get, post, put}, Router};
 use cqrs::{AddProductToCartCommandHandler, CreateCartCommandHandler, GetCartsQueryHandler};
 use events::{RabbitMqInitializationInfo, RabbitMqMessageBroker};
 use repositories::{MongoDbCartRepository, MongoDbInitializationInfo, MongoDbOrderRepository};
@@ -20,6 +20,7 @@ mod cqrs;
 mod state;
 mod routes;
 mod events;
+mod auth;
 
 #[tokio::main]
 async fn main() {
@@ -49,6 +50,8 @@ async fn main() {
         create_cart_command_handler: create_cart_command_handler,
         get_carts_query_handle: get_carts_query_handle,
         add_product_to_cart_command_handler: add_product_to_cart_command_handler,
+        auth0_domain: String::from(env::var("AUTH0_DOMAIN").unwrap()),
+        auth0_audience: String::from(env::var("AUTH0_AUDIENCE").unwrap()),
     });
 
     tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).init();
@@ -57,10 +60,21 @@ async fn main() {
 
     axum::serve(listener, Router::new()
         .route("/", get(index))
-        .route("/carts", post(create_cart))
-        .route("/carts/{id}", get(get_cart_by_id))
-        .route("/carts/addProductToCart", put(add_product_to_cart))
+
+        .route("/carts", 
+            post(create_cart)
+            .route_layer(from_fn_with_state(state.clone(), auth::authentication_middleware)))
+
+        .route("/carts/{id}", 
+            get(get_cart_by_id)
+            .route_layer(from_fn_with_state(state.clone(), auth::authentication_middleware)))
+
+        .route("/carts/addProductToCart", 
+            put(add_product_to_cart)
+            .route_layer(from_fn_with_state(state.clone(), auth::authentication_middleware)))
+
         .with_state(state)
+
         .layer(
             ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
