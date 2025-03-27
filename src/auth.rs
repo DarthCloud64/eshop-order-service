@@ -6,6 +6,7 @@ use jwks::Jwks;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::{event, Level};
 
 use crate::state::AppState;
 
@@ -61,7 +62,7 @@ pub async fn authentication_middleware(State(state): State<Arc<AppState>>, reque
                                                     match token_data.claims.aud {
                                                         Value::String(single_aud) => {
                                                             if state.auth0_audience != single_aud{
-                                                                println!("Invalid audience: {}!", single_aud);
+                                                                event!(Level::WARN, "Invalid audience: {}!", single_aud);
                                                                 return Err(StatusCode::UNAUTHORIZED);
                                                             }
                                                         },
@@ -80,48 +81,48 @@ pub async fn authentication_middleware(State(state): State<Arc<AppState>>, reque
                                                             }
 
                                                             if !aud_found{
-                                                                println!("Invalid audience!");
+                                                                event!(Level::WARN, "Invalid audience!");
                                                                 return Err(StatusCode::UNAUTHORIZED);
                                                             }
                                                         },
                                                         _ => return Err(StatusCode::UNAUTHORIZED)
                                                     }
 
-                                                    println!("Auth middleware successful!");
+                                                    event!(Level::TRACE, "Auth middleware successful!");
                                                     return Ok(next.run(request).await)
                                                 },
                                                 Err(e) => {
-                                                    println!("Failed to decode token using decode key from jwk: {}!", e);
+                                                    event!(Level::WARN, "Failed to decode token using decode key from jwk: {}!", e);
                                                     return Err(StatusCode::UNAUTHORIZED);
                                                 }
                                             }
                                         },
                                         None => {
-                                            println!("Failed to get JWK from JWKS!");
+                                            event!(Level::WARN, "Failed to get JWK from JWKS!");
                                             return Err(StatusCode::UNAUTHORIZED);
                                         }
                                     }
                                 },
                                 Err(_) => {
-                                    println!("Failed to fetch jwks!");
+                                    event!(Level::WARN, "Failed to fetch jwks!");
                                     return Err(StatusCode::UNAUTHORIZED);
                                 }
                             }
                         },
                         Err(_) => {
-                            println!("Failed to decode token header!");
+                            event!(Level::WARN, "Failed to decode token header!");
                             return Err(StatusCode::UNAUTHORIZED);
                         }
                     }
                 },
                 Err(_) => {
-                    println!("Auth header not formatted correctly!");
+                    event!(Level::WARN, "Auth header not formatted correctly!");
                     return Err(StatusCode::UNAUTHORIZED);        
                 }
             }
         },
         None => {
-            println!("No auth header found!");
+            event!(Level::WARN, "No auth header found!");
             return Err(StatusCode::UNAUTHORIZED);
         }
     }

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tracing::{event, Level};
 
 use crate::{domain::Cart, dtos::{AddProductToCartResponse, CartResponse, CreateCartResponse, GetCartsResponse, Response}, events::{Event, MessageBroker}, repositories::{CartRepository, OrderRepository}, uow::RepositoryContext};
 
@@ -60,13 +61,13 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<
                         id: created_cart.id.clone()
                     }),
                     Err(e) => {
-                        println!("Error occurred while adding product: {}", e);
+                        event!(Level::WARN, "Error occurred while adding product: {}", e);
                         Err(e)
                     }
                 }
             },
             Err(e) => {
-                println!("Error occurred while adding product: {}", e);
+                event!(Level::WARN, "Error occurred while adding product: {}", e);
                 Err(e)
             }
         }
@@ -109,9 +110,9 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<
                             });
                         }
 
-                        println!("committing");
+                        event!(Level::TRACE, "committing");
                         self.uow.commit().await.unwrap();
-                        println!("committed");
+                        event!(Level::TRACE, "committed");
 
                         Ok(AddProductToCartResponse {
                             cart_id: updated_cart.id
@@ -159,13 +160,13 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> QueryHandler<Ge
                         })
                     },
                     Err(e) => {
-                        println!("Error occurred while finding cart: {}", e);
+                        event!(Level::WARN, "Error occurred while finding cart: {}", e);
                         Err(e)
                     }
                 }
             },
             None => {
-                println!("NOT SUPPORTED YET");
+                event!(Level::INFO, "NOT SUPPORTED YET");
                 Ok(GetCartsResponse{carts: Vec::new()})
             }
         }

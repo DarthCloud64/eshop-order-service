@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::Mutex;
+use tracing::{event, Level};
 
 use crate::{domain::{Cart, Order}, events::{Event, MessageBroker}, repositories::{CartRepository, OrderRepository}};
 
@@ -44,13 +45,13 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> RepositoryConte
         let mut cart_lock = self.new_carts.lock().await;
         order_lock.clear();
         cart_lock.clear();
-        println!("cleared!!");
+        event!(Level::TRACE, "cleared!!");
 
         let mut event_lock = self.events_to_publish.lock().await;
         let mut event_results = Vec::new();
-        println!("gonna loop");
+        event!(Level::TRACE, "gonna loop");
         for e in event_lock.iter(){
-            println!("publishing event");
+            event!(Level::TRACE, "publishing event");
             event_results.push(self.message_broker.publish_message(e, "product.added.to.cart").await);
         }
 
@@ -60,7 +61,7 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> RepositoryConte
                 Ok(()) => (),
                 Err(e) => {
                     single_event_failed = true;
-                    println!("event error found! {}", e);
+                    event!(Level::WARN, "event error found! {}", e);
                 }
             };
         }

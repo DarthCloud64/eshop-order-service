@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use futures_util::TryStreamExt;
 use mongodb::{bson::doc, Client, Collection};
 use tokio::sync::Mutex;
+use tracing::{event, Level};
 
 use crate::domain::{Cart, Order};
 
@@ -113,7 +114,7 @@ impl OrderRepository for InMemoryOrderRepository {
     }
     
     async fn save_changes(&self) {
-        println!("InMemoryOrderRepository does not require saving");
+        event!(Level::INFO, "InMemoryOrderRepository does not require saving");
     }
 }
 
@@ -173,7 +174,7 @@ impl CartRepository for InMemoryCartRepository {
     }
     
     async fn save_changes(&self) {
-        println!("InMemoryCartRepository does not require saving");
+        event!(Level::INFO, "InMemoryCartRepository does not require saving");
     }
 }
 
