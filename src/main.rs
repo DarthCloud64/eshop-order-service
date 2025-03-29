@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::{http::Method, middleware::from_fn_with_state, routing::{get, post, put}, Router};
+use axum_prometheus::PrometheusMetricLayer;
 use cqrs::{AddProductToCartCommandHandler, CreateCartCommandHandler, GetCartsQueryHandler};
 use events::{RabbitMqInitializationInfo, RabbitMqMessageBroker};
 use repositories::{MongoDbCartRepository, MongoDbInitializationInfo, MongoDbOrderRepository};
@@ -56,10 +57,14 @@ async fn main() {
 
     tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).init();
 
+    let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
+
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", env::var("AXUM_PORT").unwrap())).await.unwrap();
 
     axum::serve(listener, Router::new()
         .route("/", get(index))
+
+        .route("/metrics", get(|| async move {metrics_handle.render()}))
 
         .route("/carts", 
             post(create_cart)
@@ -75,6 +80,7 @@ async fn main() {
 
         .with_state(state)
 
+        .layer(prometheus_layer)
         .layer(
             ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
