@@ -55,7 +55,17 @@ async fn main() {
         auth0_audience: String::from(env::var("AUTH0_AUDIENCE").unwrap()),
     });
 
-    tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).init();
+    tracing_subscriber::
+    fmt()
+    .with_max_level(tracing::Level::DEBUG)
+    .with_target(false)
+    .with_ansi(false)
+    .json()
+    .with_file(true)
+    .with_line_number(true)
+    .with_current_span(true)
+    .with_writer(std::fs::File::create(String::from(env::var("LOG_PATH").unwrap())).unwrap())
+    .init();
 
     let (prometheus_layer, metrics_handle) = PrometheusMetricLayer::pair();
 

@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 axum = "0.8.1"
 serde_json = "1.0.139"
-tracing-subscriber = "0.3.19"
+tracing-subscriber = { version = "0.3.19", features = ["json"]}
 tracing = "0.1.41"
 amqprs = "2.1.0"
 tower-http = { version = "0.6.2", features = ["full"] }
