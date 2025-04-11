@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 pub trait Response{}
@@ -11,7 +13,7 @@ impl Response for CreateCartResponse{}
 #[derive(Serialize, Deserialize)]
 pub struct CartResponse {
     pub id: String,
-    pub products: Vec<String>,
+    pub products: HashMap<String, i32>,
 }
 
 #[derive(Serialize, Deserialize)]

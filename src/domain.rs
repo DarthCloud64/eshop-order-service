@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,5 +12,5 @@ pub struct Order {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cart {
     pub id: String,
-    pub products: Vec<String>,
+    pub products: HashMap<String, i32>,
 }

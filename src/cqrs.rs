@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tracing::{event, Level};
@@ -51,7 +51,7 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<
     async fn handle(&self, input: &CreateCartCommand) -> Result<CreateCartResponse, String> {
         let domain_cart = Cart {
             id: uuid::Uuid::new_v4().to_string(),
-            products: Vec::new()
+            products: HashMap::new()
         };
 
         match self.uow.add_cart(domain_cart.id.clone(), domain_cart).await {
@@ -98,7 +98,14 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<
 
         match self.uow.cart_repository.read(&input.cart_id).await {
             Ok(mut found_cart) => {
-                found_cart.products.push(input.product_id.clone());
+                match found_cart.products.get(&input.product_id) {
+                    Some(current_product_quantity) => {
+                        found_cart.products.insert(input.product_id.clone(), current_product_quantity + 1);
+                    },
+                    None => {
+                        found_cart.products.insert(input.product_id.clone(), 1);
+                    }
+                }
 
                 match self.uow.cart_repository.update(input.cart_id.clone(), found_cart).await{
                     Ok(updated_cart) => {
