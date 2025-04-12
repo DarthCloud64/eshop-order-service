@@ -1,6 +1,9 @@
 use amqprs::{callbacks::{DefaultChannelCallback, DefaultConnectionCallback}, channel::{BasicPublishArguments, Channel, ExchangeDeclareArguments, ExchangeType, QueueBindArguments, QueueDeclareArguments}, connection::{Connection, OpenConnectionArguments}, BasicProperties, DELIVERY_MODE_PERSISTENT};
 use serde::Serialize;
 
+pub static PRODUCT_ADDED_TO_CART_QUEUE_NAME: &str = "product.added.to.cart";
+pub static PRODUCT_REMOVED_FROM_CART_QUEUE_NAME: &str = "product.removed.from.cart";
+
 pub struct RabbitMqInitializationInfo {
     uri: String,
     port: u16,
@@ -27,11 +30,14 @@ impl RabbitMqInitializationInfo {
 pub enum Event {
     ProductAddedToCartEvent {
         product_id: String
+    },
+    ProductRemovedFromCartEvent {
+        product_id: String
     }
 }
 
 pub trait MessageBroker {
-    async fn publish_message(&self, event: &Event, destination_name: &str) -> Result<(), String>;
+    async fn publish_message(&self, event: &Event) -> Result<(), String>;
 }
 
 pub struct RabbitMqMessageBroker {
@@ -78,15 +84,25 @@ impl RabbitMqMessageBroker {
 }
 
 impl MessageBroker for RabbitMqMessageBroker {
-    async fn publish_message(&self, event: &Event, destination_name: &str) -> Result<(), String> {
-        match self.get_channel(destination_name).await {
+    async fn publish_message(&self, event: &Event) -> Result<(), String> {
+        let mut destination_name = String::new();
+        match event {
+            Event::ProductAddedToCartEvent { .. } => {
+                destination_name = String::from(PRODUCT_ADDED_TO_CART_QUEUE_NAME);
+            },
+            Event::ProductRemovedFromCartEvent { .. } => {
+                destination_name = String::from(PRODUCT_REMOVED_FROM_CART_QUEUE_NAME);
+            },
+        }
+
+        match self.get_channel(&destination_name).await {
             Ok(channel) => {
                 let mut delivery_properties = BasicProperties::default();
                 delivery_properties.with_delivery_mode(DELIVERY_MODE_PERSISTENT);
 
                 match serde_json::to_string(&event) {
                     Ok(x) => {
-                        match channel.basic_publish(delivery_properties, x.into_bytes(), BasicPublishArguments::new(destination_name, "")).await {
+                        match channel.basic_publish(delivery_properties, x.into_bytes(), BasicPublishArguments::new(&destination_name, "")).await {
                             Ok(_) => Ok(()),
                             Err(e) => Err(format!("Failed to publish event to broker: {}", e))
                         }

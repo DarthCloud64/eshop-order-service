@@ -52,7 +52,7 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> RepositoryConte
         event!(Level::TRACE, "gonna loop");
         for e in event_lock.iter(){
             event!(Level::TRACE, "publishing event");
-            event_results.push(self.message_broker.publish_message(e, "product.added.to.cart").await);
+            event_results.push(self.message_broker.publish_message(e).await);
         }
 
         let mut single_event_failed = false;

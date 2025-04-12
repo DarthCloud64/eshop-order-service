@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use axum::{http::Method, middleware::from_fn_with_state, routing::{get, post, put}, Router};
 use axum_prometheus::PrometheusMetricLayer;
-use cqrs::{AddProductToCartCommandHandler, CreateCartCommandHandler, GetCartsQueryHandler};
+use cqrs::{AddProductToCartCommandHandler, CreateCartCommandHandler, GetCartsQueryHandler, RemoveProductFromCartCommandHandler};
 use events::{RabbitMqInitializationInfo, RabbitMqMessageBroker};
 use repositories::{MongoDbCartRepository, MongoDbInitializationInfo, MongoDbOrderRepository};
-use routes::{add_product_to_cart, create_cart, get_cart_by_id, index};
+use routes::{add_product_to_cart, create_cart, get_cart_by_id, index, remove_product_from_cart};
 use state::AppState;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -46,11 +46,13 @@ async fn main() {
     let create_cart_command_handler = Arc::new(CreateCartCommandHandler::new(uow.clone()));
     let get_carts_query_handle = Arc::new(GetCartsQueryHandler::new(uow.clone()));
     let add_product_to_cart_command_handler = Arc::new(AddProductToCartCommandHandler::new(uow.clone()));
+    let remove_product_from_cart_command_handler = Arc::new(RemoveProductFromCartCommandHandler::new(uow.clone()));
 
     let state = Arc::new(AppState {
         create_cart_command_handler: create_cart_command_handler,
         get_carts_query_handle: get_carts_query_handle,
         add_product_to_cart_command_handler: add_product_to_cart_command_handler,
+        remove_product_from_cart_command_handler: remove_product_from_cart_command_handler,
         auth0_domain: String::from(env::var("AUTH0_DOMAIN").unwrap()),
         auth0_audience: String::from(env::var("AUTH0_AUDIENCE").unwrap()),
     });
@@ -86,6 +88,10 @@ async fn main() {
 
         .route("/carts/addProductToCart", 
             put(add_product_to_cart)
+            .route_layer(from_fn_with_state(state.clone(), auth::authentication_middleware)))
+        
+        .route("/carts/removeProductFromCart",
+            put(remove_product_from_cart)
             .route_layer(from_fn_with_state(state.clone(), auth::authentication_middleware)))
 
         .with_state(state)

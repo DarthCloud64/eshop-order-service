@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde::{Deserialize, Serialize};
 use tracing::{event, Level};
 
-use crate::{domain::Cart, dtos::{AddProductToCartResponse, CartResponse, CreateCartResponse, GetCartsResponse, Response}, events::{Event, MessageBroker}, repositories::{CartRepository, OrderRepository}, uow::RepositoryContext};
+use crate::{domain::Cart, dtos::{AddProductToCartResponse, CartResponse, CreateCartResponse, EmptyResponse, GetCartsResponse, Response}, events::{Event, MessageBroker}, repositories::{CartRepository, OrderRepository}, uow::RepositoryContext};
 
 // traits
 pub trait Command{}
@@ -30,6 +30,13 @@ pub struct AddProductToCartCommand {
 impl Command for AddProductToCartCommand{}
 
 #[derive(Serialize, Deserialize)]
+pub struct RemoveProductFromCartCommand {
+    pub cart_id: String,
+    pub product_id: String,
+}
+impl Command for RemoveProductFromCartCommand{}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetCartsQuery {
     pub id: String
 }
@@ -48,7 +55,7 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CreateCartComma
 }
 
 impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<CreateCartCommand, CreateCartResponse> for CreateCartCommandHandler<T1, T2, T3>{
-    async fn handle(&self, input: &CreateCartCommand) -> Result<CreateCartResponse, String> {
+    async fn handle(&self, _: &CreateCartCommand) -> Result<CreateCartResponse, String> {
         let domain_cart = Cart {
             id: uuid::Uuid::new_v4().to_string(),
             products: HashMap::new()
@@ -126,11 +133,81 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<
                         })
                     },
                     Err(e) => {
+                        event!(Level::WARN, "Failed to update Cart with ID {}: {}", input.cart_id, e);
                         Err(format!("Failed to update Cart with ID {}: {}", input.cart_id, e))
                     }
                 }
             },
             Err(e) => {
+                event!(Level::WARN, "Failed to find Cart with ID {}: {}", input.cart_id, e);
+                Err(format!("Failed to find Cart with ID {}: {}", input.cart_id, e))
+            }
+        }
+    }
+}
+
+pub struct RemoveProductFromCartCommandHandler<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> {
+    uow: Arc<RepositoryContext<T1, T2, T3>>
+}
+
+impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> RemoveProductFromCartCommandHandler<T1, T2, T3> {
+    pub fn new(uow: Arc<RepositoryContext<T1, T2, T3>>) -> Self {
+        RemoveProductFromCartCommandHandler {
+            uow: uow,
+         }
+    }
+}
+
+impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> CommandHandler<RemoveProductFromCartCommand, EmptyResponse> for RemoveProductFromCartCommandHandler<T1, T2, T3> {
+    async fn handle(&self, input: &RemoveProductFromCartCommand) -> Result<EmptyResponse, String> {
+        if input.cart_id.is_empty() {
+            return Err(String::from("Cart ID cannot be null or empty!!!"));
+        }
+
+        if input.product_id.is_empty() {
+            return Err(String::from("Product ID cannot be null or empty!!!"));
+        }
+
+        match self.uow.cart_repository.read(&input.cart_id).await {
+            Ok(mut found_cart) => {
+                match found_cart.products.get(&input.product_id) {
+                    Some(current_product_quantity) => {
+                        if *current_product_quantity == 1 {
+                            found_cart.products.retain(|k, _| *k != input.product_id);
+                        }
+                        else {
+                            found_cart.products.insert(input.product_id.clone(), current_product_quantity - 1);
+                        }
+                    },
+                    None => {
+                        return Err(format!("Cart with id {} was not found", input.cart_id));
+                    }
+                }
+
+                match self.uow.cart_repository.update(input.cart_id.clone(), found_cart).await{
+                    Ok(_) => {
+                        {
+                            let mut event_lock = self.uow.events_to_publish.lock().await;
+
+                            event_lock.push(Event::ProductRemovedFromCartEvent {
+                                product_id: input.product_id.clone()
+                            });
+                        }
+
+                        event!(Level::TRACE, "committing");
+                        self.uow.commit().await.unwrap();
+                        event!(Level::TRACE, "committed");
+
+                        Ok(EmptyResponse{})
+                    },
+                    Err(e) => {
+                        event!(Level::WARN, "Failed to update Cart with ID {}: {}", input.cart_id, e);
+                        Err(format!("Failed to update Cart with ID {}: {}", input.cart_id, e))
+                    }
+                }
+            },
+            Err(e) => {
+                event!(Level::WARN, "Failed to find Cart with ID {}: {}", input.cart_id, e);
                 Err(format!("Failed to find Cart with ID {}: {}", input.cart_id, e))
             }
         }
