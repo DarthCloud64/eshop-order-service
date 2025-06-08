@@ -1,62 +1,94 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
+use async_trait::async_trait;
+use mongodb::ClientSession;
 use tokio::sync::Mutex;
 use tracing::{event, Level};
 
-use crate::{domain::{Cart, Order}, events::{Event, MessageBroker}, repositories::{CartRepository, OrderRepository}};
+use crate::{
+    events::{Event, MessageBroker},
+    repositories::{CartRepository, OrderRepository},
+};
 
-pub struct RepositoryContext<T1: OrderRepository, T2: CartRepository, T3: MessageBroker>{
-    pub order_repository: Arc<T1>,
-    pub cart_repository: Arc<T2>,
-    pub events_to_publish: Arc<Mutex<Vec<Event>>>,
-    message_broker: Arc<T3>,
-    new_orders: Arc<Mutex<HashMap<String, Order>>>,
-    new_carts: Arc<Mutex<HashMap<String, Cart>>>,
+#[async_trait]
+pub trait UnitOfWork {
+    async fn get_order_repository(&self) -> Arc<dyn OrderRepository + Send + Sync>;
+    async fn get_cart_repository(&self) -> Arc<dyn CartRepository + Send + Sync>;
+    async fn get_events_to_publish(&self) -> Arc<Mutex<Vec<Event>>>;
+    async fn begin_transaction(&self) -> Arc<Mutex<ClientSession>>;
+    async fn commit(&self) -> Result<(), String>;
+    async fn rollback(&self) -> Result<(), String>;
 }
 
-impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> RepositoryContext<T1, T2, T3>{
-    pub fn new(order_repository: Arc<T1>, cart_repository: Arc<T2>, message_broker: Arc<T3>) -> RepositoryContext<T1, T2, T3>{
-        RepositoryContext {
+#[derive(Clone)]
+pub struct OrderUnitOfWork {
+    order_repository: Arc<dyn OrderRepository + Send + Sync>,
+    cart_repository: Arc<dyn CartRepository + Send + Sync>,
+    message_broker: Arc<dyn MessageBroker + Send + Sync>,
+    events_to_publish: Arc<Mutex<Vec<Event>>>,
+    client_session: Arc<Mutex<ClientSession>>,
+}
+
+impl OrderUnitOfWork {
+    pub fn new(
+        order_repository: Arc<dyn OrderRepository + Send + Sync>,
+        cart_repository: Arc<dyn CartRepository + Send + Sync>,
+        message_broker: Arc<dyn MessageBroker + Send + Sync>,
+        client_session: Arc<Mutex<ClientSession>>,
+    ) -> OrderUnitOfWork {
+        OrderUnitOfWork {
             order_repository: order_repository,
             cart_repository: cart_repository,
             message_broker: message_broker,
-            new_orders: Arc::new(Mutex::new(HashMap::new())),
-            new_carts: Arc::new(Mutex::new(HashMap::new())),
             events_to_publish: Arc::new(Mutex::new(Vec::new())),
+            client_session: client_session,
         }
     }
+}
 
-    pub async fn add_order(&self, id: String, order: Order) -> Result<Order, String>{
-        let mut lock = self.new_orders.lock().await;
-        lock.insert(id.clone(), order.clone());
-
-        self.order_repository.create(id, order).await
+#[async_trait]
+impl UnitOfWork for OrderUnitOfWork {
+    async fn get_order_repository(&self) -> Arc<dyn OrderRepository + Send + Sync> {
+        self.order_repository.clone()
     }
 
-    pub async fn add_cart(&self, id: String, cart: Cart) -> Result<Cart, String>{
-        let mut lock = self.new_carts.lock().await;
-        lock.insert(id.clone(), cart.clone());
-        
-        self.cart_repository.create(id, cart).await
+    async fn get_cart_repository(&self) -> Arc<dyn CartRepository + Send + Sync> {
+        self.cart_repository.clone()
     }
 
-    pub async fn commit(&self) -> Result<(), String> {
-        let mut order_lock = self.new_orders.lock().await;
-        let mut cart_lock = self.new_carts.lock().await;
-        order_lock.clear();
-        cart_lock.clear();
-        event!(Level::TRACE, "cleared!!");
+    async fn get_events_to_publish(&self) -> Arc<Mutex<Vec<Event>>> {
+        self.events_to_publish.clone()
+    }
 
-        let mut event_lock = self.events_to_publish.lock().await;
+    async fn begin_transaction(&self) -> Arc<Mutex<ClientSession>> {
+        self.client_session
+            .lock()
+            .await
+            .start_transaction()
+            .await
+            .unwrap();
+
+        self.client_session.clone()
+    }
+    async fn commit(&self) -> Result<(), String> {
+        event!(Level::TRACE, "Committing changes");
+
+        self.client_session
+            .lock()
+            .await
+            .commit_transaction()
+            .await
+            .unwrap();
+
+        let mut lock = self.events_to_publish.lock().await;
         let mut event_results = Vec::new();
-        event!(Level::TRACE, "gonna loop");
-        for e in event_lock.iter(){
+        for e in lock.iter() {
             event!(Level::TRACE, "publishing event");
             event_results.push(self.message_broker.publish_message(e).await);
         }
 
         let mut single_event_failed = false;
-        for result in event_results{
+        for result in event_results {
             let _ = match result {
                 Ok(()) => (),
                 Err(e) => {
@@ -66,21 +98,23 @@ impl<T1: OrderRepository, T2: CartRepository, T3: MessageBroker> RepositoryConte
             };
         }
 
-        event_lock.clear();
-        
+        lock.clear();
+
         if single_event_failed {
-            return Err(String::from("Failed to commit changes."))
+            return Err(String::from("Failed to commit changes."));
         }
 
         Ok(())
     }
 
-    pub async fn rollback(&self) -> Result<(), String> {
-        let mut order_lock = self.new_orders.lock().await;
-        let mut cart_lock = self.new_carts.lock().await;
-        order_lock.clear();
-        cart_lock.clear();
-        
+    async fn rollback(&self) -> Result<(), String> {
+        self.client_session
+            .lock()
+            .await
+            .abort_transaction()
+            .await
+            .unwrap();
+
         Ok(())
     }
 }
